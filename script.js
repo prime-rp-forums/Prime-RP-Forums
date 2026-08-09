@@ -346,6 +346,8 @@ function screenThread(){
           <div class="fd-row" style="cursor:pointer;" onclick="togglePin('${t.id}')"><span>${t.pinned?'Unsticky':'Sticky'}</span></div>
           <div class="fd-row" style="cursor:pointer;" onclick="toggleLock('${t.id}')"><span>${t.locked?'Open (Unlock)':'Close (Lock)'}</span></div>
           ${archiveForum ? `<div class="fd-row" style="cursor:pointer;" onclick="moveToArchive('${t.id}','${archiveForum.id}')"><span>Move to Archive</span></div>` : ''}
+          <div class="fd-row" style="cursor:pointer;" onclick="copyThreadLink('${t.id}')"><span>${ICONS.link} Copy Link</span></div>
+          <div class="fd-row" style="cursor:pointer;" onclick="openEditThread('${t.id}')"><span>Edit Title</span></div>
           <div class="fd-row"><span>Change Prefix</span></div>
           <div style="padding:6px 0 10px;">
             <select onchange="changePrefix('${t.id}', this.value)" style="font-size:12.5px;">
@@ -353,6 +355,10 @@ function screenThread(){
             </select>
           </div>
           <div class="fd-row" style="cursor:pointer; color:var(--red);" onclick="deleteThread('${t.id}')"><span>Delete Thread</span></div>
+        </div>
+      ` : session.username ? `
+        <div class="pill-row" style="margin-top:8px;">
+          <button class="pill-btn ghost" onclick="copyThreadLink('${t.id}')">${ICONS.link} Copy Link</button>
         </div>
       ` : ''}
     </div>
@@ -367,7 +373,11 @@ function screenThread(){
         <div class="post-body">
           <div class="post-meta"><span>#${i+1}</span><span>${timeAgo(p.created)}</span></div>
           <div class="post-text">${renderMarkdown(p.text)}</div>
-          ${modOk ? `<div class="post-actions"><button class="danger" onclick="deletePost('${p.id}')">Delete</button></div>` : ''}
+          <div class="post-actions">
+            ${session.username ? `<button onclick="quotePost('${esc(p.author)}', \`${p.text.replace(/`/g,"'").replace(/\n/g,' ')}\`)">Quote</button>` : ''}
+            ${(session.username===p.author || modOk) ? `<button onclick="openEditPost('${p.id}', \`${p.text.replace(/`/g,"'")}\`)">Edit</button>` : ''}
+            ${modOk ? `<button class="danger" onclick="deletePost('${p.id}')">Delete</button>` : ''}
+          </div>
         </div>
       </div>
     `).join('')}
@@ -636,6 +646,50 @@ async function moveToArchive(threadId, archiveForumId){
   if(error) return toast(error.message);
   await addLog('Moved a thread to Archive');
   await fetchAllData(); toast('Moved to Archive'); go('forum',{forumId:archiveForumId});
+}
+function copyThreadLink(threadId){
+  const url = location.origin + location.pathname + '#thread/' + threadId;
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(url).then(()=>toast('Link copied')).catch(()=>toast(url));
+  } else { toast(url); }
+}
+function quotePost(author, text){
+  const ta = document.getElementById('replyText');
+  if(!ta) return toast('Scroll down to the reply box first');
+  const quoted = text.split('\n').map(l=>'> '+l).join('\n');
+  ta.value += (ta.value?'\n\n':'') + `**${author} wrote:**\n${quoted}\n\n`;
+  ta.focus();
+  ta.scrollIntoView({behavior:'smooth', block:'center'});
+}
+function openEditThread(threadId){
+  const t = DB.threads.find(x=>x.id===threadId);
+  modal(`
+    <h3>Edit Thread Title</h3>
+    <div class="field"><input id="editThreadTitle" value="${esc(t.title)}"></div>
+    <div class="actions"><button onclick="closeModal()">Cancel</button><button class="primary" onclick="submitEditThread('${threadId}')">Save</button></div>
+  `);
+}
+async function submitEditThread(threadId){
+  const title = document.getElementById('editThreadTitle').value.trim();
+  if(!title) return toast('Title cannot be empty');
+  const { error } = await sb.from('threads').update({ title }).eq('id', threadId);
+  if(error) return toast(error.message);
+  await fetchAllData(); closeModal(); render(); toast('Title updated');
+}
+function openEditPost(postId, currentText){
+  modal(`
+    <h3>Edit Post</h3>
+    <div class="field">${rtToolbar('editPostText')}<textarea id="editPostText" style="min-height:120px;">${esc(currentText)}</textarea></div>
+    <div class="actions"><button onclick="closeModal()">Cancel</button><button class="primary" onclick="submitEditPost('${postId}')">Save</button></div>
+  `);
+}
+async function submitEditPost(postId){
+  const body = document.getElementById('editPostText').value.trim();
+  if(!body) return toast('Post cannot be empty');
+  const { error } = await sb.from('posts').update({ body }).eq('id', postId);
+  if(error) return toast(error.message);
+  await addLog('Edited a post');
+  await fetchAllData(); closeModal(); render(); toast('Post updated');
 }
 async function changePrefix(threadId, prefix){
   const { error } = await sb.from('threads').update({ prefix }).eq('id', threadId);
